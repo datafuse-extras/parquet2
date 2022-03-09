@@ -23,7 +23,7 @@ pub(super) fn start_file<W: Write>(writer: &mut W) -> Result<u64> {
     Ok(PARQUET_MAGIC.len() as u64)
 }
 
-pub(super) fn end_file<W: Write>(mut writer: &mut W, metadata: FileMetaData) -> Result<u64> {
+pub(super) fn end_file<W: Write>(mut writer: &mut W, metadata: &FileMetaData) -> Result<u64> {
     // Write metadata
     let mut protocol = TCompactOutputProtocol::new(&mut writer);
     let metadata_len = metadata.write_to_out_protocol(&mut protocol)? as i32;
@@ -141,6 +141,16 @@ impl<W: Write> FileWriter<W> {
         if self.state != State::Started {
             return Err(Error::General("End cannot be called twice".to_string()));
         }
+        let (len, _) = self.end_ext(key_value_metadata)?;
+        Ok(len)
+    }
+
+    /// Writes the footer of the parquet file. Returns the total size of the file and the
+    /// underlying writer.
+    pub fn end_ext(
+        &mut self,
+        key_value_metadata: Option<Vec<KeyValue>>,
+    ) -> Result<(u64, FileMetaData)> {
         // compute file stats
         let num_rows = self.row_groups.iter().map(|group| group.num_rows).sum();
 
@@ -195,9 +205,9 @@ impl<W: Write> FileWriter<W> {
             None,
         );
 
-        let len = end_file(&mut self.writer, metadata)?;
+        let len = end_file(&mut self.writer, &metadata)?;
         self.state = State::Finished;
-        Ok(self.offset + len)
+        Ok((self.offset + len, metadata))
     }
 
     /// Returns the underlying writer.
@@ -232,7 +242,7 @@ mod tests {
 
         // write the file
         start_file(&mut writer)?;
-        end_file(&mut writer, metadata.into_thrift())?;
+        end_file(&mut writer, &metadata.into_thrift())?;
 
         let a = writer.into_inner();
 

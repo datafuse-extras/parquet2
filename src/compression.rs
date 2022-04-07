@@ -188,6 +188,20 @@ pub fn decompress(compression: Compression, input_buf: &[u8], output_buf: &mut [
             crate::error::Feature::Lz4,
             "decompress with lz4".to_string(),
         )),
+
+        #[cfg(all(feature = "lz4_with_legacy_decompression", not(feature = "lz4_flex")))]
+        Compression::Lz4 => {
+            use std::io::Read;
+            let mut decoder = lz4::Decoder::new(input_buf)?;
+            decoder.read_exact(output_buf).map_err(|e| e.into())
+        }
+
+        #[cfg(not(feature = "lz4_with_legacy_decompression"))]
+        Compression::Lz4 => Err(Error::FeatureNotActive(
+            crate::error::Feature::Lz4,
+            "decompress with legacy lz4".to_string(),
+        )),
+
         #[cfg(feature = "zstd")]
         Compression::Zstd => {
             use std::io::Read;

@@ -26,6 +26,8 @@ jobs:
         run: cargo test
       - name: Run lz4-flex
         run: cargo test --no-default-features --features lz4_flex,bloom_filter,snappy,brotli,zstd,gzip
+      - name: Run lz4-legacy
+        run: cargo test --no-default-features --features lz4_with_legacy_decompression,bloom_filter,snappy,brotli,zstd,gzip
 
   clippy:
     name: Clippy

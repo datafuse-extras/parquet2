@@ -34,12 +34,14 @@ xxhash-rust = { version="0.8.3", optional = true, features = ["xxh64"] }
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt"] }
 criterion = "0.3"
+rand = "0.8"
 
 [features]
 default = ["snappy", "gzip", "lz4", "zstd", "brotli", "bloom_filter"]
 snappy = ["snap"]
 gzip = ["flate2"]
 bloom_filter = ["xxhash-rust"]
+lz4_with_legacy_decompression = ["lz4"]
 
 [[bench]]
 name = "decode_bitpacking"

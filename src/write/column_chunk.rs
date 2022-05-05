@@ -1,22 +1,20 @@
 use std::collections::HashSet;
-use std::convert::TryInto;
 use std::io::Write;
 
 use futures::AsyncWrite;
 use parquet_format_async_temp::thrift::protocol::{
     TCompactOutputProtocol, TCompactOutputStreamProtocol, TOutputProtocol, TOutputStreamProtocol,
 };
-use parquet_format_async_temp::{ColumnChunk, ColumnMetaData};
+use parquet_format_async_temp::{ColumnChunk, ColumnMetaData, Type};
 
 use crate::statistics::serialize_statistics;
 use crate::FallibleStreamingIterator;
 use crate::{
     compression::Compression,
     encoding::Encoding,
-    error::{ParquetError, Result},
+    error::{Error, Result},
     metadata::ColumnDescriptor,
     page::{CompressedPage, PageType},
-    schema::types::{physical_type_to_type, ParquetType},
 };
 
 use super::page::{write_page, write_page_async, PageWriteSpec};
@@ -27,12 +25,11 @@ pub fn write_column_chunk<'a, W, E>(
     writer: &mut W,
     mut offset: u64,
     descriptor: &ColumnDescriptor,
-    compression: Compression,
     mut compressed_pages: DynStreamingIterator<'a, CompressedPage, E>,
-) -> Result<(ColumnChunk, u64)>
+) -> Result<(ColumnChunk, Vec<PageWriteSpec>, u64)>
 where
     W: Write,
-    ParquetError: From<E>,
+    Error: From<E>,
     E: std::error::Error,
 {
     // write every page
@@ -47,7 +44,7 @@ where
     }
     let mut bytes_written = offset - initial;
 
-    let column_chunk = build_column_chunk(&specs, descriptor, compression)?;
+    let column_chunk = build_column_chunk(&specs, descriptor)?;
 
     // write metadata
     let mut protocol = TCompactOutputProtocol::new(writer);
@@ -58,19 +55,18 @@ where
         .write_to_out_protocol(&mut protocol)? as u64;
     protocol.flush()?;
 
-    Ok((column_chunk, bytes_written))
+    Ok((column_chunk, specs, bytes_written))
 }
 
 pub async fn write_column_chunk_async<W, E>(
     writer: &mut W,
     mut offset: u64,
     descriptor: &ColumnDescriptor,
-    compression: Compression,
     mut compressed_pages: DynStreamingIterator<'_, CompressedPage, E>,
-) -> Result<(ColumnChunk, usize)>
+) -> Result<(ColumnChunk, Vec<PageWriteSpec>, u64)>
 where
     W: AsyncWrite + Unpin + Send,
-    ParquetError: From<E>,
+    Error: From<E>,
     E: std::error::Error,
 {
     let initial = offset;
@@ -81,9 +77,9 @@ where
         offset += spec.bytes_written;
         specs.push(spec);
     }
-    let mut bytes_written = (offset - initial) as usize;
+    let mut bytes_written = offset - initial;
 
-    let column_chunk = build_column_chunk(&specs, descriptor, compression)?;
+    let column_chunk = build_column_chunk(&specs, descriptor)?;
 
     // write metadata
     let mut protocol = TCompactOutputStreamProtocol::new(writer);
@@ -92,18 +88,31 @@ where
         .as_ref()
         .unwrap()
         .write_to_out_stream_protocol(&mut protocol)
-        .await?;
+        .await? as u64;
     protocol.flush().await?;
 
-    Ok((column_chunk, bytes_written))
+    Ok((column_chunk, specs, bytes_written))
 }
 
 fn build_column_chunk(
     specs: &[PageWriteSpec],
     descriptor: &ColumnDescriptor,
-    compression: Compression,
 ) -> Result<ColumnChunk> {
     // compute stats to build header at the end of the chunk
+
+    let compression = specs
+        .iter()
+        .map(|spec| spec.compression)
+        .collect::<HashSet<_>>();
+    if compression.len() > 1 {
+        return Err(crate::error::Error::OutOfSpec(
+            "All pages within a column chunk must be compressed with the same codec".to_string(),
+        ));
+    }
+    let compression = compression
+        .into_iter()
+        .next()
+        .unwrap_or(Compression::Uncompressed);
 
     // SPEC: the total compressed size is the total compressed size of each page + the header size
     let total_compressed_size = specs
@@ -131,7 +140,7 @@ fn build_column_chunk(
             }
         })
         .sum();
-    let encodings = specs
+    let mut encodings = specs
         .iter()
         .flat_map(|spec| {
             let type_ = spec.header.type_.try_into().unwrap();
@@ -153,30 +162,25 @@ fn build_column_chunk(
                         .unwrap()
                         .encoding,
                 ],
-                _ => todo!(),
             }
         })
         .collect::<HashSet<_>>() // unique
         .into_iter() // to vec
-        .collect();
+        .collect::<Vec<_>>();
+
+    // Sort the encodings to have deterministic metadata
+    encodings.sort();
 
     let statistics = specs.iter().map(|x| &x.statistics).collect::<Vec<_>>();
     let statistics = reduce(&statistics)?;
     let statistics = statistics.map(|x| serialize_statistics(x.as_ref()));
 
-    let type_ = match descriptor.type_() {
-        ParquetType::PrimitiveType { physical_type, .. } => physical_type_to_type(physical_type).0,
-        _ => {
-            return Err(general_err!(
-                "Trying to write a row group of a non-physical type"
-            ))
-        }
-    };
+    let (type_, _): (Type, Option<i32>) = descriptor.descriptor.primitive_type.physical_type.into();
 
     let metadata = ColumnMetaData {
         type_,
         encodings,
-        path_in_schema: descriptor.path_in_schema().to_vec(),
+        path_in_schema: descriptor.path_in_schema.clone(),
         codec: compression.into(),
         num_values,
         total_uncompressed_size,

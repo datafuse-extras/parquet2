@@ -9,7 +9,7 @@ pub use primitive::PrimitivePageDict;
 use std::{any::Any, sync::Arc};
 
 use crate::compression::{decompress, Compression};
-use crate::error::{ParquetError, Result};
+use crate::error::{Error, Result};
 use crate::schema::types::PhysicalType;
 
 /// A dynamic trait describing a decompressed and decoded Dictionary Page.
@@ -36,17 +36,24 @@ impl EncodedDictPage {
 #[derive(Debug)]
 pub struct CompressedDictPage {
     pub(crate) buffer: Vec<u8>,
+    compression: Compression,
     pub(crate) num_values: usize,
     pub(crate) uncompressed_page_size: usize,
 }
 
 impl CompressedDictPage {
-    pub fn new(buffer: Vec<u8>, uncompressed_page_size: usize, num_values: usize) -> Self {
+    pub fn new(buffer: Vec<u8>, compression: Compression, uncompressed_page_size: usize, num_values: usize) -> Self {
         Self {
             buffer,
+            compression,
             uncompressed_page_size,
             num_values,
         }
+    }
+
+    /// The compression of the data in this page.
+    pub fn compression(&self) -> Compression {
+        self.compression
     }
 }
 
@@ -54,7 +61,7 @@ pub fn read_dict_page(
     page: &EncodedDictPage,
     compression: (Compression, usize),
     is_sorted: bool,
-    physical_type: &PhysicalType,
+    physical_type: PhysicalType,
 ) -> Result<Arc<dyn DictPage>> {
     if compression.0 != Compression::Uncompressed {
         let mut decompressed = vec![0; compression.1];
@@ -69,10 +76,10 @@ fn deserialize(
     buf: &[u8],
     num_values: usize,
     is_sorted: bool,
-    physical_type: &PhysicalType,
+    physical_type: PhysicalType,
 ) -> Result<Arc<dyn DictPage>> {
     match physical_type {
-        PhysicalType::Boolean => Err(ParquetError::OutOfSpec(
+        PhysicalType::Boolean => Err(Error::OutOfSpec(
             "Boolean physical type cannot be dictionary-encoded".to_string(),
         )),
         PhysicalType::Int32 => primitive::read::<i32>(buf, num_values, is_sorted),
@@ -81,6 +88,6 @@ fn deserialize(
         PhysicalType::Float => primitive::read::<f32>(buf, num_values, is_sorted),
         PhysicalType::Double => primitive::read::<f64>(buf, num_values, is_sorted),
         PhysicalType::ByteArray => binary::read(buf, num_values),
-        PhysicalType::FixedLenByteArray(size) => fixed_len_binary::read(buf, *size, num_values),
+        PhysicalType::FixedLenByteArray(size) => fixed_len_binary::read(buf, size, num_values),
     }
 }

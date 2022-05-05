@@ -4,24 +4,48 @@ use std::collections::HashMap;
 
 use super::super::Repetition;
 use super::{
-    spec, BasicTypeInfo, GroupConvertedType, LogicalType, PhysicalType, PrimitiveConvertedType,
+    spec, FieldInfo, GroupConvertedType, GroupLogicalType, PhysicalType, PrimitiveConvertedType,
+    PrimitiveLogicalType,
 };
 
-/// Representation of a Parquet type.
-/// Used to describe primitive leaf fields and structs, including top-level schema.
-/// Note that the top-level schema type is represented using `GroupType` whose
-/// repetition is `None`.
+/// The complete description of a parquet column
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PrimitiveType {
+    /// The fields' generic information
+    pub field_info: FieldInfo,
+    /// The optional logical type
+    pub logical_type: Option<PrimitiveLogicalType>,
+    /// The optional converted type
+    pub converted_type: Option<PrimitiveConvertedType>,
+    /// The physical type
+    pub physical_type: PhysicalType,
+}
+
+impl PrimitiveType {
+    /// Helper method to create an optional field with no logical or converted types.
+    pub fn from_physical(name: String, physical_type: PhysicalType) -> Self {
+        let field_info = FieldInfo {
+            name,
+            repetition: Repetition::Optional,
+            id: None,
+        };
+        Self {
+            field_info,
+            converted_type: None,
+            logical_type: None,
+            physical_type,
+        }
+    }
+}
+
+/// Representation of a Parquet type describing primitive and nested fields,
+/// including the top-level schema of the parquet file.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ParquetType {
-    PrimitiveType {
-        basic_info: BasicTypeInfo,
-        logical_type: Option<LogicalType>,
-        converted_type: Option<PrimitiveConvertedType>,
-        physical_type: PhysicalType,
-    },
+    PrimitiveType(PrimitiveType),
     GroupType {
-        basic_info: BasicTypeInfo,
-        logical_type: Option<LogicalType>,
+        field_info: FieldInfo,
+        logical_type: Option<GroupLogicalType>,
         converted_type: Option<GroupConvertedType>,
         fields: Vec<ParquetType>,
     },
@@ -29,41 +53,31 @@ pub enum ParquetType {
 
 /// Accessors
 impl ParquetType {
-    /// Returns [`BasicTypeInfo`] information about the type.
-    pub fn get_basic_info(&self) -> &BasicTypeInfo {
-        match *self {
-            Self::PrimitiveType { ref basic_info, .. } => basic_info,
-            Self::GroupType { ref basic_info, .. } => basic_info,
+    /// Returns [`FieldInfo`] information about the type.
+    pub fn get_field_info(&self) -> &FieldInfo {
+        match self {
+            Self::PrimitiveType(primitive) => &primitive.field_info,
+            Self::GroupType { field_info, .. } => field_info,
         }
     }
 
     /// Returns this type's field name.
     pub fn name(&self) -> &str {
-        self.get_basic_info().name()
-    }
-
-    pub fn is_root(&self) -> bool {
-        self.get_basic_info().is_root()
+        &self.get_field_info().name
     }
 
     /// Checks if `sub_type` schema is part of current schema.
     /// This method can be used to check if projected columns are part of the root schema.
     pub fn check_contains(&self, sub_type: &ParquetType) -> bool {
-        // Names match, and repetitions match or not set for both
-        let basic_match = self.get_basic_info().name() == sub_type.get_basic_info().name()
-            && (self.is_root() && sub_type.is_root()
-                || !self.is_root()
-                    && !sub_type.is_root()
-                    && self.get_basic_info().repetition()
-                        == sub_type.get_basic_info().repetition());
+        let basic_match = self.get_field_info() == sub_type.get_field_info();
 
         match (self, sub_type) {
             (
-                Self::PrimitiveType { physical_type, .. },
-                Self::PrimitiveType {
+                Self::PrimitiveType(PrimitiveType { physical_type, .. }),
+                Self::PrimitiveType(PrimitiveType {
                     physical_type: other_physical_type,
                     ..
-                },
+                }),
             ) => basic_match && physical_type == other_physical_type,
             (
                 Self::GroupType { fields, .. },
@@ -96,10 +110,14 @@ impl ParquetType {
 
 /// Constructors
 impl ParquetType {
-    pub fn new_root(name: String, fields: Vec<ParquetType>) -> Self {
-        let basic_info = BasicTypeInfo::new(name, Repetition::Optional, None, true);
+    pub(crate) fn new_root(name: String, fields: Vec<ParquetType>) -> Self {
+        let field_info = FieldInfo {
+            name,
+            repetition: Repetition::Optional,
+            id: None,
+        };
         ParquetType::GroupType {
-            basic_info,
+            field_info,
             fields,
             logical_type: None,
             converted_type: None,
@@ -109,66 +127,76 @@ impl ParquetType {
     pub fn from_converted(
         name: String,
         fields: Vec<ParquetType>,
-        repetition: Option<Repetition>,
+        repetition: Repetition,
         converted_type: Option<GroupConvertedType>,
         id: Option<i32>,
     ) -> Self {
-        let basic_info =
-            BasicTypeInfo::new(name, repetition.unwrap_or(Repetition::Optional), id, false);
+        let field_info = FieldInfo {
+            name,
+            repetition,
+            id,
+        };
+
         ParquetType::GroupType {
-            basic_info,
+            field_info,
             fields,
             converted_type,
             logical_type: None,
         }
     }
 
+    /// # Error
+    /// Errors iff the combination of physical, logical and coverted type is not valid.
     pub fn try_from_primitive(
         name: String,
         physical_type: PhysicalType,
         repetition: Repetition,
         converted_type: Option<PrimitiveConvertedType>,
-        logical_type: Option<LogicalType>,
+        logical_type: Option<PrimitiveLogicalType>,
         id: Option<i32>,
     ) -> Result<Self> {
         spec::check_converted_invariants(&physical_type, &converted_type)?;
         spec::check_logical_invariants(&physical_type, &logical_type)?;
 
-        let basic_info = BasicTypeInfo::new(name, repetition, id, false);
+        let field_info = FieldInfo {
+            name,
+            repetition,
+            id,
+        };
 
-        Ok(ParquetType::PrimitiveType {
-            basic_info,
+        Ok(ParquetType::PrimitiveType(PrimitiveType {
+            field_info,
             converted_type,
             logical_type,
             physical_type,
-        })
+        }))
     }
 
+    /// Helper method to create a [`ParquetType::PrimitiveType`] optional field
+    /// with no logical or converted types.
     pub fn from_physical(name: String, physical_type: PhysicalType) -> Self {
-        let basic_info = BasicTypeInfo::new(name, Repetition::Optional, None, false);
-        ParquetType::PrimitiveType {
-            basic_info,
-            converted_type: None,
-            logical_type: None,
-            physical_type,
-        }
+        ParquetType::PrimitiveType(PrimitiveType::from_physical(name, physical_type))
     }
 
-    pub fn try_from_group(
+    pub fn from_group(
         name: String,
         repetition: Repetition,
         converted_type: Option<GroupConvertedType>,
-        logical_type: Option<LogicalType>,
+        logical_type: Option<GroupLogicalType>,
         fields: Vec<ParquetType>,
         id: Option<i32>,
-    ) -> Result<Self> {
-        let basic_info = BasicTypeInfo::new(name, repetition, id, false);
+    ) -> Self {
+        let field_info = FieldInfo {
+            name,
+            repetition,
+            id,
+        };
 
-        Ok(ParquetType::GroupType {
-            basic_info,
+        ParquetType::GroupType {
+            field_info,
             logical_type,
             converted_type,
             fields,
-        })
+        }
     }
 }

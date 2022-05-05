@@ -7,12 +7,13 @@ pub use parquet_format_async_temp::{
     DataPageHeader as DataPageHeaderV1, DataPageHeaderV2, PageHeader as ParquetPageHeader,
 };
 
+use crate::indexes::Interval;
 pub use crate::parquet_bridge::{DataPageHeaderExt, PageType};
 
 use crate::compression::Compression;
 use crate::encoding::{get_length, Encoding};
 use crate::error::Result;
-use crate::metadata::ColumnDescriptor;
+use crate::metadata::Descriptor;
 
 use crate::statistics::{deserialize_statistics, Statistics};
 
@@ -25,17 +26,43 @@ pub struct CompressedDataPage {
     compression: Compression,
     uncompressed_page_size: usize,
     pub(crate) dictionary_page: Option<Arc<dyn DictPage>>,
-    pub(crate) descriptor: ColumnDescriptor,
+    pub(crate) descriptor: Descriptor,
+
+    // The offset and length in rows
+    pub(crate) selected_rows: Option<Vec<Interval>>,
 }
 
 impl CompressedDataPage {
+    /// Returns a new [`CompressedDataPage`].
     pub fn new(
         header: DataPageHeader,
         buffer: Vec<u8>,
         compression: Compression,
         uncompressed_page_size: usize,
         dictionary_page: Option<Arc<dyn DictPage>>,
-        descriptor: ColumnDescriptor,
+        descriptor: Descriptor,
+        rows: Option<usize>,
+    ) -> Self {
+        Self::new_read(
+            header,
+            buffer,
+            compression,
+            uncompressed_page_size,
+            dictionary_page,
+            descriptor,
+            rows.map(|x| vec![Interval::new(0, x)]),
+        )
+    }
+
+    /// Returns a new [`CompressedDataPage`].
+    pub(crate) fn new_read(
+        header: DataPageHeader,
+        buffer: Vec<u8>,
+        compression: Compression,
+        uncompressed_page_size: usize,
+        dictionary_page: Option<Arc<dyn DictPage>>,
+        descriptor: Descriptor,
+        selected_rows: Option<Vec<Interval>>,
     ) -> Self {
         Self {
             header,
@@ -44,6 +71,7 @@ impl CompressedDataPage {
             uncompressed_page_size,
             dictionary_page,
             descriptor,
+            selected_rows,
         }
     }
 
@@ -59,8 +87,17 @@ impl CompressedDataPage {
         self.buffer.len()
     }
 
+    /// The compression of the data in this page.
+    /// Note that what is compressed in a page depends on its version:
+    /// in V1, the whole data (`[repetition levels][definition levels][values]`) is compressed; in V2 only the values are compressed.
     pub fn compression(&self) -> Compression {
         self.compression
+    }
+
+    /// the rows to be selected by this page.
+    /// When `None`, all rows are to be considered.
+    pub fn selected_rows(&self) -> Option<&[Interval]> {
+        self.selected_rows.as_deref()
     }
 
     pub fn num_values(&self) -> usize {
@@ -73,16 +110,12 @@ impl CompressedDataPage {
             DataPageHeader::V1(d) => d
                 .statistics
                 .as_ref()
-                .map(|x| deserialize_statistics(x, self.descriptor().clone())),
+                .map(|x| deserialize_statistics(x, self.descriptor.primitive_type.clone())),
             DataPageHeader::V2(d) => d
                 .statistics
                 .as_ref()
-                .map(|x| deserialize_statistics(x, self.descriptor().clone())),
+                .map(|x| deserialize_statistics(x, self.descriptor.primitive_type.clone())),
         }
-    }
-
-    pub fn descriptor(&self) -> &ColumnDescriptor {
-        &self.descriptor
     }
 }
 
@@ -108,7 +141,8 @@ pub struct DataPage {
     pub(super) header: DataPageHeader,
     pub(super) buffer: Vec<u8>,
     pub(super) dictionary_page: Option<Arc<dyn DictPage>>,
-    pub(super) descriptor: ColumnDescriptor,
+    pub descriptor: Descriptor,
+    pub selected_rows: Option<Vec<Interval>>,
 }
 
 impl DataPage {
@@ -116,13 +150,31 @@ impl DataPage {
         header: DataPageHeader,
         buffer: Vec<u8>,
         dictionary_page: Option<Arc<dyn DictPage>>,
-        descriptor: ColumnDescriptor,
+        descriptor: Descriptor,
+        rows: Option<usize>,
+    ) -> Self {
+        Self::new_read(
+            header,
+            buffer,
+            dictionary_page,
+            descriptor,
+            rows.map(|x| vec![Interval::new(0, x)]),
+        )
+    }
+
+    pub(crate) fn new_read(
+        header: DataPageHeader,
+        buffer: Vec<u8>,
+        dictionary_page: Option<Arc<dyn DictPage>>,
+        descriptor: Descriptor,
+        selected_rows: Option<Vec<Interval>>,
     ) -> Self {
         Self {
             header,
             buffer,
             dictionary_page,
             descriptor,
+            selected_rows,
         }
     }
 
@@ -136,6 +188,12 @@ impl DataPage {
 
     pub fn buffer(&self) -> &[u8] {
         &self.buffer
+    }
+
+    /// the rows to be selected by this page.
+    /// When `None`, all rows are to be considered.
+    pub fn selected_rows(&self) -> Option<&[Interval]> {
+        self.selected_rows.as_deref()
     }
 
     /// Returns a mutable reference to the internal buffer.
@@ -175,22 +233,19 @@ impl DataPage {
             DataPageHeader::V1(d) => d
                 .statistics
                 .as_ref()
-                .map(|x| deserialize_statistics(x, self.descriptor().clone())),
+                .map(|x| deserialize_statistics(x, self.descriptor.primitive_type.clone())),
             DataPageHeader::V2(d) => d
                 .statistics
                 .as_ref()
-                .map(|x| deserialize_statistics(x, self.descriptor().clone())),
+                .map(|x| deserialize_statistics(x, self.descriptor.primitive_type.clone())),
         }
-    }
-
-    pub fn descriptor(&self) -> &ColumnDescriptor {
-        &self.descriptor
     }
 }
 
 /// A [`Page`] is an uncompressed, encoded representation of a Parquet page. It may hold actual data
 /// and thus cloning it may be expensive.
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum Page {
     Data(DataPage),
     Dict(Arc<dyn DictPage>),
@@ -199,6 +254,7 @@ pub enum Page {
 /// A [`EncodedPage`] is an uncompressed, encoded representation of a Parquet page. It may hold actual data
 /// and thus cloning it may be expensive.
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum EncodedPage {
     Data(DataPage),
     Dict(EncodedDictPage),
@@ -207,6 +263,7 @@ pub enum EncodedPage {
 /// A [`CompressedPage`] is a compressed, encoded representation of a Parquet page. It holds actual data
 /// and thus cloning it is expensive.
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum CompressedPage {
     Data(CompressedDataPage),
     Dict(CompressedDictPage),
@@ -217,6 +274,27 @@ impl CompressedPage {
         match self {
             CompressedPage::Data(page) => &mut page.buffer,
             CompressedPage::Dict(page) => &mut page.buffer,
+        }
+    }
+
+    pub(crate) fn compression(&self) -> Compression {
+        match self {
+            CompressedPage::Data(page) => page.compression(),
+            CompressedPage::Dict(page) => page.compression(),
+        }
+    }
+
+    pub(crate) fn num_values(&self) -> usize {
+        match self {
+            CompressedPage::Data(page) => page.num_values(),
+            CompressedPage::Dict(_) => 0,
+        }
+    }
+
+    pub(crate) fn selected_rows(&self) -> Option<&[Interval]> {
+        match self {
+            CompressedPage::Data(page) => page.selected_rows(),
+            CompressedPage::Dict(_) => None,
         }
     }
 }
@@ -261,15 +339,12 @@ pub fn split_buffer_v2(
 }
 
 /// Splits the page buffer into 3 slices corresponding to (encoded rep levels, encoded def levels, encoded values).
-pub fn split_buffer<'a>(
-    page: &'a DataPage,
-    descriptor: &ColumnDescriptor,
-) -> (&'a [u8], &'a [u8], &'a [u8]) {
+pub fn split_buffer(page: &DataPage) -> (&[u8], &[u8], &[u8]) {
     match page.header() {
         DataPageHeader::V1(_) => split_buffer_v1(
             page.buffer(),
-            descriptor.max_rep_level() > 0,
-            descriptor.max_def_level() > 0,
+            page.descriptor.max_rep_level > 0,
+            page.descriptor.max_def_level > 0,
         ),
         DataPageHeader::V2(header) => {
             let def_level_buffer_length = header.definition_levels_byte_length as usize;

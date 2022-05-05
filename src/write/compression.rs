@@ -1,6 +1,6 @@
-use crate::error::{ParquetError, Result};
+use crate::compression::CompressionOptions;
+use crate::error::{Error, Result};
 use crate::page::{CompressedDictPage, CompressedPage, DataPageHeader, EncodedDictPage};
-use crate::parquet_bridge::Compression;
 use crate::FallibleStreamingIterator;
 use crate::{
     compression,
@@ -11,16 +11,17 @@ use crate::{
 fn compress_data(
     page: DataPage,
     mut compressed_buffer: Vec<u8>,
-    compression: Compression,
+    compression: CompressionOptions,
 ) -> Result<CompressedDataPage> {
     let DataPage {
         mut buffer,
         header,
         dictionary_page,
         descriptor,
+        selected_rows,
     } = page;
     let uncompressed_page_size = buffer.len();
-    if compression != Compression::Uncompressed {
+    if compression != CompressionOptions::Uncompressed {
         match &header {
             DataPageHeader::V1(_) => {
                 compression::compress(compression, &buffer, &mut compressed_buffer)?;
@@ -40,42 +41,51 @@ fn compress_data(
     } else {
         std::mem::swap(&mut buffer, &mut compressed_buffer);
     };
-    Ok(CompressedDataPage::new(
+    Ok(CompressedDataPage::new_read(
         header,
         compressed_buffer,
-        compression,
+        compression.into(),
         uncompressed_page_size,
         dictionary_page,
         descriptor,
+        selected_rows,
     ))
 }
 
 fn compress_dict(
     page: EncodedDictPage,
     mut compressed_buffer: Vec<u8>,
-    compression: Compression,
+    compression: CompressionOptions,
 ) -> Result<CompressedDictPage> {
     let EncodedDictPage {
         mut buffer,
         num_values,
     } = page;
     let uncompressed_page_size = buffer.len();
-    if compression != Compression::Uncompressed {
+    if compression != CompressionOptions::Uncompressed {
         compression::compress(compression, &buffer, &mut compressed_buffer)?;
     } else {
         std::mem::swap(&mut buffer, &mut compressed_buffer);
     }
     Ok(CompressedDictPage::new(
         compressed_buffer,
+        compression.into(),
         uncompressed_page_size,
         num_values,
     ))
 }
 
+/// Compresses an [`EncodedPage`] into a [`CompressedPage`] using `compressed_buffer` as the
+/// intermediary buffer.
+///
+/// `compressed_buffer` is taken by value because it becomes owned by [`CompressedPage`]
+///
+/// # Errors
+/// Errors if the compressor fails
 pub fn compress(
     page: EncodedPage,
     compressed_buffer: Vec<u8>,
-    compression: Compression,
+    compression: CompressionOptions,
 ) -> Result<CompressedPage> {
     match page {
         EncodedPage::Data(page) => {
@@ -91,17 +101,19 @@ pub fn compress(
 /// holding a reusable buffer ([`Vec<u8>`]) for compression.
 pub struct Compressor<I: Iterator<Item = Result<EncodedPage>>> {
     iter: I,
-    compression: Compression,
+    compression: CompressionOptions,
     buffer: Vec<u8>,
     current: Option<CompressedPage>,
 }
 
 impl<I: Iterator<Item = Result<EncodedPage>>> Compressor<I> {
-    pub fn new_from_vec(iter: I, compression: Compression, buffer: Vec<u8>) -> Self {
+    /// Creates a new [`Compressor`]
+    pub fn new_from_vec(iter: I, compression: CompressionOptions, buffer: Vec<u8>) -> Self {
         Self::new(iter, compression, buffer)
     }
 
-    pub fn new(iter: I, compression: Compression, buffer: Vec<u8>) -> Self {
+    /// Creates a new [`Compressor`]
+    pub fn new(iter: I, compression: CompressionOptions, buffer: Vec<u8>) -> Self {
         Self {
             iter,
             compression,
@@ -113,7 +125,7 @@ impl<I: Iterator<Item = Result<EncodedPage>>> Compressor<I> {
 
 impl<I: Iterator<Item = Result<EncodedPage>>> FallibleStreamingIterator for Compressor<I> {
     type Item = CompressedPage;
-    type Error = ParquetError;
+    type Error = Error;
 
     fn advance(&mut self) -> std::result::Result<(), Self::Error> {
         let mut compressed_buffer = if let Some(page) = self.current.as_mut() {

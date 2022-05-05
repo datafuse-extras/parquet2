@@ -1,17 +1,15 @@
-use std::convert::TryInto;
-
 use parquet_format_async_temp::SchemaElement;
 
-use crate::error::{ParquetError, Result};
-
-use super::super::types::{
-    converted_to_group_converted, converted_to_primitive_converted, type_to_physical_type,
-    ParquetType,
+use crate::{
+    error::{Error, Result},
+    schema::types::FieldInfo,
 };
+
+use super::super::types::ParquetType;
 
 impl ParquetType {
     /// Method to convert from Thrift.
-    pub fn try_from_thrift(elements: &[&SchemaElement]) -> Result<ParquetType> {
+    pub fn try_from_thrift(elements: &[SchemaElement]) -> Result<ParquetType> {
         let mut index = 0;
         let mut schema_nodes = Vec::new();
         while index < elements.len() {
@@ -34,18 +32,16 @@ impl ParquetType {
 /// The first result is the starting index for the next Type after this one. If it is
 /// equal to `elements.len()`, then this Type is the last one.
 /// The second result is the result Type.
-fn from_thrift_helper(elements: &[&SchemaElement], index: usize) -> Result<(usize, ParquetType)> {
+fn from_thrift_helper(elements: &[SchemaElement], index: usize) -> Result<(usize, ParquetType)> {
     // Whether or not the current node is root (message type).
     // There is only one message type node in the schema tree.
     let is_root_node = index == 0;
 
-    let element = elements[index];
+    let element = &elements[index];
     let name = element.name.clone();
     let converted_type = element.converted_type;
-    // LogicalType is only present in v2 Parquet files. ConvertedType is always
-    // populated, regardless of the version of the file (v1 or v2).
-    let logical_type = &element.logical_type;
-    let field_id = element.field_id;
+
+    let id = element.field_id;
     match element.num_children {
         // From parquet-format:
         //   The children count is used to construct the nested relationship.
@@ -64,11 +60,9 @@ fn from_thrift_helper(elements: &[&SchemaElement], index: usize) -> Result<(usiz
             let physical_type = element.type_.ok_or_else(|| {
                 general_err!("Physical type must be defined for a primitive type")
             })?;
-            let length = element.type_length;
-            let physical_type = type_to_physical_type(&physical_type, length)?;
 
-            let converted_type = match converted_type {
-                Some(converted_type) => Some({
+            let converted_type = converted_type
+                .map(|converted_type| {
                     let maybe_decimal = match (element.precision, element.scale) {
                         (Some(precision), Some(scale)) => Some((precision, scale)),
                         (None, None) => None,
@@ -78,24 +72,28 @@ fn from_thrift_helper(elements: &[&SchemaElement], index: usize) -> Result<(usiz
                             ))
                         }
                     };
-                    converted_to_primitive_converted(&converted_type, maybe_decimal)?
-                }),
-                None => None,
-            };
+                    (converted_type, maybe_decimal).try_into()
+                })
+                .transpose()?;
+
+            let logical_type = element
+                .logical_type
+                .clone()
+                .map(|x| x.try_into())
+                .transpose()?;
 
             let tp = ParquetType::try_from_primitive(
                 name,
-                physical_type,
+                (physical_type, element.type_length).try_into()?,
                 repetition,
                 converted_type,
-                logical_type.clone(),
-                field_id,
+                logical_type,
+                id,
             )?;
 
             Ok((index + 1, tp))
         }
         Some(n) => {
-            let repetition = element.repetition_type.map(|x| x.try_into().unwrap());
             let mut fields = vec![];
             let mut next_index = index + 1;
             for _ in 0..n {
@@ -107,11 +105,32 @@ fn from_thrift_helper(elements: &[&SchemaElement], index: usize) -> Result<(usiz
             let tp = if is_root_node {
                 ParquetType::new_root(name, fields)
             } else {
-                let converted_type = match converted_type {
-                    Some(converted_type) => Some(converted_to_group_converted(&converted_type)?),
-                    None => None,
+                let repetition = if let Some(repetition) = element.repetition_type {
+                    repetition.try_into()?
+                } else {
+                    return Err(Error::OutOfSpec(
+                        "The repetition level of a non-root must be non-null".to_string(),
+                    ));
                 };
-                ParquetType::from_converted(name, fields, repetition, converted_type, field_id)
+
+                let converted_type = converted_type.map(|x| x.try_into()).transpose()?;
+
+                let logical_type = element
+                    .logical_type
+                    .clone()
+                    .map(|x| x.try_into())
+                    .transpose()?;
+
+                ParquetType::GroupType {
+                    field_info: FieldInfo {
+                        name,
+                        repetition,
+                        id,
+                    },
+                    fields,
+                    converted_type,
+                    logical_type,
+                }
             };
             Ok((next_index, tp))
         }

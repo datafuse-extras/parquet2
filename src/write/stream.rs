@@ -8,7 +8,7 @@ use parquet_format_async_temp::{
 };
 
 use crate::{
-    error::{ParquetError, Result},
+    error::{Error, Result},
     metadata::{KeyValue, SchemaDescriptor},
     FOOTER_SIZE, PARQUET_MAGIC,
 };
@@ -92,23 +92,21 @@ impl<W: AsyncWrite + Unpin + Send> FileStreamer<W> {
     }
 
     /// Writes a row group to the file.
-    pub async fn write<E>(&mut self, row_group: RowGroupIter<'_, E>, num_rows: usize) -> Result<()>
+    pub async fn write<E>(&mut self, row_group: RowGroupIter<'_, E>) -> Result<()>
     where
-        ParquetError: From<E>,
+        Error: From<E>,
         E: std::error::Error,
     {
         if self.offset == 0 {
-            return Err(ParquetError::General(
+            return Err(Error::General(
                 "You must call `start` before writing the first row group".to_string(),
             ));
         }
-        let (group, size) = write_row_group_async(
+        let (group, _specs, size) = write_row_group_async(
             &mut self.writer,
             self.offset,
             self.schema.columns(),
-            self.options.compression,
             row_group,
-            num_rows,
         )
         .await?;
         self.offset += size;
@@ -124,7 +122,7 @@ impl<W: AsyncWrite + Unpin + Send> FileStreamer<W> {
 
         let metadata = FileMetaData::new(
             self.options.version.into(),
-            self.schema.into_thrift()?,
+            self.schema.into_thrift(),
             num_rows,
             self.row_groups,
             key_value_metadata,

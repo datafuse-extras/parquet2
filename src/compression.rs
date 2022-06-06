@@ -93,8 +93,13 @@ pub fn compress(
             output_buf,
             |len| Ok(lz4::block::compress_bound(len)?),
             |input, output| {
-                let compressed_size = lz4::block::compress_to_buffer(input, None, false, output)?;
-                Ok(compressed_size)
+                if input.is_empty() {
+                    Ok(0)
+                } else {
+                    let compressed_size =
+                        lz4::block::compress_to_buffer(input, None, false, output)?;
+                    Ok(compressed_size)
+                }
             },
         ),
         #[cfg(all(not(feature = "lz4"), not(feature = "lz4_flex")))]
@@ -179,9 +184,17 @@ pub fn decompress(compression: Compression, input_buf: &[u8], output_buf: &mut [
             .map_err(|e| e.into()),
         #[cfg(feature = "lz4")]
         Compression::Lz4Raw => {
-            lz4::block::decompress_to_buffer(input_buf, Some(output_buf.len() as i32), output_buf)
+            if input_buf.is_empty() {
+                Ok(())
+            } else {
+                lz4::block::decompress_to_buffer(
+                    input_buf,
+                    Some(output_buf.len() as i32),
+                    output_buf,
+                )
                 .map(|_| {})
                 .map_err(|e| e.into())
+            }
         }
         #[cfg(all(not(feature = "lz4"), not(feature = "lz4_flex")))]
         Compression::Lz4Raw => Err(Error::FeatureNotActive(

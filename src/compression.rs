@@ -79,14 +79,19 @@ pub fn compress(
         #[cfg(feature = "lz4")]
         CompressionOptions::Lz4Raw => {
             let output_buf_len = output_buf.len();
-            let required_len = lz4::block::compress_bound(input_buf.len())?;
-            output_buf.resize(required_len, 0);
-            let size = lz4::block::compress_to_buffer(
-                input_buf,
-                None,
-                false,
-                &mut output_buf[output_buf_len..],
-            )?;
+            let size = if input_buf.is_empty() {
+                0
+            } else {
+                let output_buf_len = output_buf.len();
+                let required_len = lz4::block::compress_bound(input_buf.len())?;
+                output_buf.resize(required_len, 0);
+                lz4::block::compress_to_buffer(
+                    input_buf,
+                    None,
+                    false,
+                    &mut output_buf[output_buf_len..],
+                )?
+            };
             output_buf.truncate(output_buf_len + size);
             Ok(())
         }
@@ -172,9 +177,17 @@ pub fn decompress(compression: Compression, input_buf: &[u8], output_buf: &mut [
             .map_err(|e| e.into()),
         #[cfg(feature = "lz4")]
         Compression::Lz4Raw => {
-            lz4::block::decompress_to_buffer(input_buf, Some(output_buf.len() as i32), output_buf)
+            if input_buf.is_empty() {
+                Ok(())
+            } else {
+                lz4::block::decompress_to_buffer(
+                    input_buf,
+                    Some(output_buf.len() as i32),
+                    output_buf,
+                )
                 .map(|_| {})
                 .map_err(|e| e.into())
+            }
         }
         #[cfg(all(not(feature = "lz4"), not(feature = "lz4_flex")))]
         Compression::Lz4Raw => Err(Error::FeatureNotActive(

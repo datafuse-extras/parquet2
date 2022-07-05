@@ -41,6 +41,7 @@ default = ["snappy", "gzip", "lz4", "zstd", "brotli", "bloom_filter"]
 snappy = ["snap"]
 gzip = ["flate2"]
 bloom_filter = ["xxhash-rust"]
+non_standard_legacy_lz4 = ["lz4"]
 
 [[bench]]
 name = "decode_bitpacking"

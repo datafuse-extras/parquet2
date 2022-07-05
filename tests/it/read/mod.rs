@@ -11,7 +11,7 @@ mod primitive_nested;
 mod struct_;
 mod utils;
 
-#[cfg(any(feature = "lz4", feature = "lz4_flex"))]
+#[cfg(all(not(feature = "non_standard_legacy_lz4"), any(feature = "lz4_flex", feature = "lz4")))]
 mod lz4_legacy;
 
 use std::fs::File;

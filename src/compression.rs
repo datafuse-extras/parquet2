@@ -189,14 +189,20 @@ pub fn decompress(compression: Compression, input_buf: &[u8], output_buf: &mut [
             "decompress with lz4".to_string(),
         )),
 
-        #[cfg(any(feature = "lz4_flex", feature = "lz4"))]
+        #[cfg(all(not(feature = "non_standard_legacy_lz4"), any(feature = "lz4_flex", feature = "lz4")))]
         Compression::Lz4 => try_decompress_hadoop(input_buf, output_buf).or_else(|_| {
             lz4_decompress_to_buffer(input_buf, Some(output_buf.len() as i32), output_buf)
                 .map(|_| {})
-        }
-        ),
+        }),
 
-        #[cfg(all(not(feature = "lz4_flex"), not(feature = "lz4")))]
+        #[cfg(all(feature = "non_standard_legacy_lz4", not(any(feature = "lz4_flex", feature = "lz4"))))]
+        Compression::Lz4 => {
+            use std::io::Read;
+            let mut decoder = lz4::Decoder::new(input_buf)?;
+            decoder.read_exact(output_buf).map_err(|e| e.into())
+        },
+
+        #[cfg(all(not(feature = "non_standard_legacy_lz4"), not(feature = "lz4_flex"), not(feature = "lz4")))]
         Compression::Lz4 => Err(Error::FeatureNotActive(
             crate::error::Feature::Lz4,
             "decompress with legacy lz4".to_string(),
@@ -226,7 +232,7 @@ pub fn decompress(compression: Compression, input_buf: &[u8], output_buf: &mut [
 /// Try to decompress the buffer as if it was compressed with the Hadoop Lz4Codec.
 /// Translated from the apache arrow c++ function [TryDecompressHadoop](https://github.com/apache/arrow/blob/bf18e6e4b5bb6180706b1ba0d597a65a4ce5ca48/cpp/src/arrow/util/compression_lz4.cc#L474).
 /// Returns error if decompression failed.
-#[cfg(any(feature = "lz4", feature = "lz4_flex"))]
+#[cfg(all(not(feature = "non_standard_legacy_lz4"), any(feature = "lz4_flex", feature = "lz4")))]
 fn try_decompress_hadoop(input_buf: &[u8], output_buf: &mut [u8]) -> Result<()> {
     // Parquet files written with the Hadoop Lz4Codec use their own framing.
     // The input buffer can contain an arbitrary number of "frames", each
@@ -287,7 +293,7 @@ fn try_decompress_hadoop(input_buf: &[u8], output_buf: &mut [u8]) -> Result<()> 
     }
 }
 
-#[cfg(all(feature = "lz4", not(feature = "lz4_flex")))]
+#[cfg(all(not(feature = "non_standard_legacy_lz4"), any(feature = "lz4_flex", feature = "lz4")))]
 #[inline]
 fn lz4_decompress_to_buffer(
     src: &[u8],

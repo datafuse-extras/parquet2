@@ -195,14 +195,14 @@ pub fn decompress(compression: Compression, input_buf: &[u8], output_buf: &mut [
                 .map(|_| {})
         }),
 
-        #[cfg(all(feature = "non_standard_legacy_lz4", not(any(feature = "lz4_flex", feature = "lz4"))))]
+        #[cfg(all(feature = "non_standard_legacy_lz4", any(feature = "lz4_flex", feature = "lz4")))]
         Compression::Lz4 => {
             use std::io::Read;
             let mut decoder = lz4::Decoder::new(input_buf)?;
             decoder.read_exact(output_buf).map_err(|e| e.into())
         },
 
-        #[cfg(all(not(feature = "non_standard_legacy_lz4"), not(feature = "lz4_flex"), not(feature = "lz4")))]
+        #[cfg(all(feature = "non_standard_legacy_lz4", not(feature = "lz4_flex"), not(feature = "lz4")))]
         Compression::Lz4 => Err(Error::FeatureNotActive(
             crate::error::Feature::Lz4,
             "decompress with legacy lz4".to_string(),

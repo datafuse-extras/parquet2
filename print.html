@@ -5,8 +5,10 @@
         <meta charset="UTF-8">
         <title>parquet2 documentation</title>
         <meta name="robots" content="noindex" />
+
+
         <!-- Custom HTML head -->
-        <meta content="text/html; charset=utf-8" http-equiv="Content-Type">
+        
         <meta name="description" content="">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#ffffff" />
@@ -17,25 +19,29 @@
         <link rel="stylesheet" href="css/general.css">
         <link rel="stylesheet" href="css/chrome.css">
         <link rel="stylesheet" href="css/print.css" media="print">
+
         <!-- Fonts -->
         <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
         <link rel="stylesheet" href="fonts/fonts.css">
+
         <!-- Highlight.js Stylesheets -->
         <link rel="stylesheet" href="highlight.css">
         <link rel="stylesheet" href="tomorrow-night.css">
         <link rel="stylesheet" href="ayu-highlight.css">
 
         <!-- Custom theme stylesheets -->
+
     </head>
     <body>
+    <div id="body-container">
         <!-- Provide site root to javascript -->
-        <script type="text/javascript">
+        <script>
             var path_to_root = "";
             var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
         </script>
 
         <!-- Work around some values being stored in localStorage wrapped in quotes -->
-        <script type="text/javascript">
+        <script>
             try {
                 var theme = localStorage.getItem('mdbook-theme');
                 var sidebar = localStorage.getItem('mdbook-sidebar');
@@ -51,7 +57,7 @@
         </script>
 
         <!-- Set the theme before any content is loaded, prevents flash -->
-        <script type="text/javascript">
+        <script>
             var theme;
             try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
             if (theme === null || theme === undefined) { theme = default_theme; }
@@ -63,12 +69,14 @@
         </script>
 
         <!-- Hide / unhide sidebar before it is displayed -->
-        <script type="text/javascript">
+        <script>
             var html = document.querySelector('html');
-            var sidebar = 'hidden';
+            var sidebar = null;
             if (document.body.clientWidth >= 1080) {
                 try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
                 sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
             }
             html.classList.remove('sidebar-visible');
             html.classList.add("sidebar-" + sidebar);
@@ -84,7 +92,7 @@
         <div id="page-wrapper" class="page-wrapper">
 
             <div class="page">
-                <div id="menu-bar-hover-placeholder"></div>
+                                <div id="menu-bar-hover-placeholder"></div>
                 <div id="menu-bar" class="menu-bar sticky bordered">
                     <div class="left-buttons">
                         <button id="sidebar-toggle" class="icon-button" type="button" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
@@ -94,7 +102,7 @@
                             <i class="fa fa-paint-brush"></i>
                         </button>
                         <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
-                            <li role="none"><button role="menuitem" class="theme" id="light">Light (default)</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
                             <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
                             <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
                             <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
@@ -111,6 +119,7 @@
                         <a href="print.html" title="Print this book" aria-label="Print this book">
                             <i id="print-button" class="fa fa-print"></i>
                         </a>
+
                     </div>
                 </div>
 
@@ -124,8 +133,9 @@
                         </ul>
                     </div>
                 </div>
+
                 <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
-                <script type="text/javascript">
+                <script>
                     document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
                     document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
                     Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
@@ -164,8 +174,7 @@ To do so, we offer two functions for <code>sync</code> and <code>async</code>:</
     let mut reader = std::fs::File::open(path)?;
     let metadata = read_metadata(&amp;mut reader)?;
 
-    println!(&quot;{:#?}&quot;, metadata);
-</code></pre>
+    println!(&quot;{:#?}&quot;, metadata);</code></pre>
 <h4 id="async"><a class="header" href="#async">Async</a></h4>
 <p>and <code>parquet2::read::read_metadata_async</code>, for async reads
 (using <code>tokio::fs</code> as example):</p>
@@ -181,8 +190,7 @@ async fn main() -&gt; Result&lt;()&gt; {
     // metadata
     println!(&quot;{:#?}&quot;, metadata);
     Ok(())
-}
-</code></pre></pre>
+}</code></pre></pre>
 <p>In both cases, <code>metadata: FileMetaData</code> is the file's metadata.</p>
 <h2 id="columns-row-groups-columns-chunks-and-pages"><a class="header" href="#columns-row-groups-columns-chunks-and-pages">Columns, Row Groups, Columns chunks and Pages</a></h2>
 <p>At this point, it is important to give a small introduction to the format itself.
@@ -202,32 +210,41 @@ Here we will focus on a single column to show how we can read it.</p>
 <pre><code class="language-rust no_run noplayground">    let row_group = 0;
     let column = 0;
     let columns = metadata.row_groups[row_group].columns();
-    let column_metadata = &amp;columns[column];
-</code></pre>
+    let column_metadata = &amp;columns[column];</code></pre>
 <p>From this, we can produce an iterator of compressed pages (sync), 
 <code>parquet2::read::get_page_iterator</code> or a stream (async) of compressed
 pages, <code>parquet2::read::get_page_stream</code>:</p>
 <pre><code class="language-rust no_run noplayground">    use parquet2::read::get_page_iterator;
-    let pages = get_page_iterator(column_metadata, &amp;mut reader, None, vec![])?;
-</code></pre>
+    let pages = get_page_iterator(column_metadata, &amp;mut reader, None, vec![], 1024 * 1024)?;</code></pre>
 <p>in both cases, they yield individual <code>CompressedDataPage</code>s. Note that these
 pages do hold values and own potentially large chunks of (compressed) memory.</p>
 <p>At this point, we are missing 3 steps: decompress, decode and deserialize.
 Decompression is done via <code>decompress</code>:</p>
 <pre><code class="language-rust no_run noplayground">    let mut decompress_buffer = vec![];
+    let mut dict = None;
     for maybe_page in pages {
         let page = maybe_page?;
         let page = parquet2::read::decompress(page, &amp;mut decompress_buffer)?;
 
-        let _array = deserialize(&amp;page);
-    }
-</code></pre>
+        match page {
+            Page::Dict(page) =&gt; {
+                // the first page may be a dictionary page, which needs to be deserialized
+                // depending on your target in-memory format, you may want to deserialize
+                // the values differently...
+                // let page = deserialize_dict(&amp;page)?;
+                dict = Some(page);
+            }
+            Page::Data(page) =&gt; {
+                let _array = deserialize(&amp;page, dict.as_ref())?;
+            }
+        }
+    }</code></pre>
 <p>Decoding and deserialization is usually done in the same step, as follows:</p>
 <pre><code class="language-rust no_run noplayground">use parquet2::encoding::Encoding;
-use parquet2::page::{split_buffer, DataPage};
+use parquet2::page::{split_buffer, DataPage, DictPage, Page};
 use parquet2::schema::types::PhysicalType;
 
-fn deserialize(page: &amp;DataPage) -&gt; Result&lt;()&gt; {
+fn deserialize(page: &amp;DataPage, dict: Option&lt;&amp;DictPage&gt;) -&gt; Result&lt;()&gt; {
     // split the data buffer in repetition levels, definition levels and values
     let (_rep_levels, _def_levels, _values_buffer) = split_buffer(page)?;
 
@@ -235,7 +252,7 @@ fn deserialize(page: &amp;DataPage) -&gt; Result&lt;()&gt; {
     match (
         page.descriptor.primitive_type.physical_type,
         page.encoding(),
-        page.dictionary_page(),
+        dict,
     ) {
         (
             PhysicalType::Int32,
@@ -252,8 +269,7 @@ fn deserialize(page: &amp;DataPage) -&gt; Result&lt;()&gt; {
         }
         _ =&gt; todo!(),
     }
-}
-</code></pre>
+}</code></pre>
 <p>the details of the <code>todo!</code> are highly specific to the target in-memory format to use.
 Thus, here we only describe how to decompose the page buffer in its individual
 components and what you need to worry about.
@@ -294,8 +310,7 @@ which can be downcasted via its <code>Statistics::physical_type()</code>:</p>
             }
             _ =&gt; todo!(),
         }
-    }
-</code></pre>
+    }</code></pre>
 <h2 id="bloom-filters"><a class="header" href="#bloom-filters">Bloom filters</a></h2>
 <p>The column metadata may contain bloom filter bitsets that can be used to pushdown
 filter operations to row groups.</p>
@@ -316,17 +331,21 @@ filter operations to row groups.</p>
         // if not (false), we could skip this entire row group, because no item hits the filter
         // this can naturally be applied over multiple columns.
         // if yes (true), the item _may_ be in the row group, and we usually can't skip it.
-    }
-</code></pre>
+    }</code></pre>
 <h2 id="column-and-page-indexes"><a class="header" href="#column-and-page-indexes">Column and page indexes</a></h2>
 <p>The column metadata may contain column and page indexes that can be used to push down filters
 when reading (IO) pages.</p>
 <p>This crate offers the necessary functionality to check whether an item is not in a column chunk:</p>
-<pre><code class="language-rust no_run noplayground">    let row_group = 0;
-    let column = 0;
-    let columns = metadata.row_groups[row_group].columns();
-    let column_metadata = &amp;columns[column];
-</code></pre>
+<pre><code class="language-rust no_run noplayground">    // read the column indexes of every column
+    use parquet2::read;
+    let index = read::read_columns_indexes(&amp;mut reader, columns)?;
+    // these are the minimum and maximum within each page, which can be used
+    // to skip pages.
+    println!(&quot;{index:?}&quot;);
+
+    // read the offset indexes containing page locations of every column
+    let pages = read::read_pages_locations(&amp;mut reader, columns)?;
+    println!(&quot;{pages:?}&quot;);</code></pre>
 <h2 id="sidecar"><a class="header" href="#sidecar">Sidecar</a></h2>
 <p>When writing multiple parquet files, it is common to have a &quot;sidecar&quot; metadata file containing
 the combined metadata of all files, including statistics.</p>
@@ -393,38 +412,49 @@ fn main() -&gt; Result&lt;(), Error&gt; {
     write_metadata_sidecar(&amp;mut writer, &amp;sidecar)?;
 
     Ok(())
-}
-</code></pre></pre>
+}</code></pre></pre>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
+
+
                         <div style="clear: both"></div>
                     </nav>
                 </div>
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
+
             </nav>
 
         </div>
 
-        <script type="text/javascript">
+
+
+
+        <script>
             window.playground_copyable = true;
         </script>
-        <script src="elasticlunr.min.js" type="text/javascript" charset="utf-8"></script>
-        <script src="mark.min.js" type="text/javascript" charset="utf-8"></script>
-        <script src="searcher.js" type="text/javascript" charset="utf-8"></script>
-        <script src="clipboard.min.js" type="text/javascript" charset="utf-8"></script>
-        <script src="highlight.js" type="text/javascript" charset="utf-8"></script>
-        <script src="book.js" type="text/javascript" charset="utf-8"></script>
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
 
         <!-- Custom JS scripts -->
-        <script type="text/javascript">
+
+        <script>
         window.addEventListener('load', function() {
             window.setTimeout(window.print, 100);
         });
         </script>
+
+    </div>
     </body>
 </html>
